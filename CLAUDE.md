@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+All agents follow [AGENTS.md](AGENTS.md). See the [development workflow](doc/agent-development-workflow.md)
+for task execution, environment setup and worktree previews.
+
 ## What this is
 
 Nightingale (n9e) is an open-source alerting/monitoring platform. Go module `github.com/ccfos/nightingale/v6`, Go 1.25, gin + gorm. The frontend lives in a separate repo (`n9e/fe`) and is embedded at build time as a statik bundle. A commercial fork (`flashcatcloud/n9e-plus`) imports this module and calls into `center.Initialize`-style entry points, so **exported function signatures that plus calls (e.g. `alert.Start`, `centerrt.New`, `BuildNotifyContext`) are effectively public API** — prefer adding fields/setters over changing parameter lists (see comments in `center/center.go` and `alert/alert.go`).
@@ -10,7 +13,13 @@ Nightingale (n9e) is an open-source alerting/monitoring platform. Go module `git
 
 ```bash
 # Build (front/statik/statik.go is committed, so plain go build works without fe.sh)
-go build ./...                       # ~1 min cold; verifies everything incl. tests compile
+go build ./...                       # builds packages, does not compile/run *_test.go
+make verify                          # format, infra tests, Go build/test, applicable integration gates
+make verify-all                      # also vet and both integration gates
+make preview                         # isolated SQLite/miniredis/TSDB preview
+make preview-refresh                 # rebuild/restart, retain slot and data
+make preview-status                  # build identity and local/public probes
+make stable-status                   # independent main instance (n9e.cubbber.dev)
 make build                           # ./n9e  (cmd/center, embeds version via ldflags)
 make build-edge | build-alert | build-pushgw | build-cli
 sh fe.sh                             # download latest n9e/fe release into ./pub and regenerate front/statik (needs $GOPATH/bin/statik)
@@ -19,7 +28,7 @@ sh fe.sh                             # download latest n9e/fe release into ./pub
 ./n9e --configs etc.local            # etc.local* dirs are git-ignored per-developer configs; etc/ is the shipped default
 ./n9e-edge --configs etc/edge        # edge/alert processes need [CenterApi] configured
 
-# Tests (unit tests use in-memory sqlite via github.com/glebarez/sqlite; no external services needed)
+# Tests (many use in-memory SQLite; some dskit tests require external services)
 go test ./...
 go test ./models/ -run TestAlertRuleVerify -count=1      # single test
 go test ./center/router/ -run 'TestQueryBatchV2' -v
@@ -30,7 +39,9 @@ go run ./cmd/integrations-alert-action update    # tighten integrations/alert_ac
 go run ./cmd/integrations-i18n check -scope all  # en_US rendering of templates must contain no Chinese
 ```
 
-There is no lint config in the repo; CI only runs the two integration gates above and goreleaser on tags.
+PR CI, Paseo verify and pre-push use `make verify`, alongside the existing
+integration and evidence gates. Releases use GoReleaser on tags. There is no
+golangci-lint configuration; `make verify-all` includes go vet and reports baseline failures.
 
 ## Process topology
 

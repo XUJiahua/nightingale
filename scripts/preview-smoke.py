@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Explicit integration check: two worktrees, real builds, isolated disposable data.
+
+Run separately from make verify. Leaves the ordinary host registry untouched.
+"""
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import sqlite3
+import subprocess
+import tempfile
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    with tempfile.TemporaryDirectory(prefix="n9e-smoke-") as temporary:
+        base = Path(temporary)
+        second = base / "worktree"
+        state = base / "state"
+        state.mkdir(mode=0o700)
+        ports = []
+        for _ in range(2):
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                ports.append(sock.getsockname()[1])
+        if ports[0] == ports[1]:
+            raise RuntimeError("port collision; retry smoke check")
+        (state / "config.json").write_text(json.dumps({"slots": [
+            {"id": 0, "port": ports[0]}, {"id": 1, "port": ports[1]}]}))
+        env = {**os.environ, "N9E_PREVIEW_STATE": str(state), "PYTHONDONTWRITEBYTECODE": "1"}
+
+        def command(root, *args, success=True):
+            result = subprocess.run(["python3", "-B", str(root / "scripts/preview.py"), *args],
+                                    env=env, capture_output=True, text=True)
+            if (result.returncode == 0) != success:
+                logs = []
+                for path in (state / "instances").glob("*/build.log"):
+                    logs.append(f"{path}:\n" + path.read_text()[-6000:])
+                raise RuntimeError(f"{args}: {result.stdout}\n{result.stderr}\n" + "\n".join(logs))
+            return json.loads(result.stdout) if result.stdout.lstrip().startswith("{") else result.stdout
+
+        def read(port, path):
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(f"http://127.0.0.1:{port}{path}", timeout=10) as response:
+                return response.read().decode()
+
+        subprocess.run(["git", "worktree", "add", "--detach", str(second), "HEAD"], cwd=ROOT, check=True,
+                       stdout=subprocess.DEVNULL)
+        try:
+            # Overlay this task's working changes without committing or touching the base checkout.
+            changed = subprocess.check_output(["git", "diff", "--name-only", "-z", "HEAD"], cwd=ROOT)
+            changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=ROOT)
+            for name in set(changed.split(b"\0")) - {b""}:
+                relative = os.fsdecode(name)
+                source, dest = ROOT / relative, second / relative
+                if source.is_file():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, dest)
+                elif not source.exists() and dest.exists():
+                    dest.unlink()
+            first = command(ROOT, "up", "--slot", "0")
+            assert first["local"]["ok"] and not first["sourceChanged"]
+            command(second, "up", "--slot", "0", success=False)
+            frontend = base / "frontend"
+            frontend.mkdir()
+            (frontend / "index.html").write_text("<html>smoke frontend one</html>")
+            other = command(second, "up", "--slot", "1", "--frontend-dir", str(frontend), "--frontend-ref", "smoke-fixture")
+            assert other["local"]["ok"] and first["buildId"] != other["buildId"]
+            first_credentials = json.loads(Path(first["credentialsFile"]).read_text())
+            other_credentials = json.loads(Path(other["credentialsFile"]).read_text())
+            assert first_credentials != other_credentials
+            with sqlite3.connect(Path(first["instanceDir"]) / "run/n9e.db") as db:
+                db.execute("CREATE TABLE preview_isolation_probe (value TEXT)")
+                db.execute("INSERT INTO preview_isolation_probe VALUES ('only-first')")
+            with sqlite3.connect(Path(other["instanceDir"]) / "run/n9e.db") as db:
+                assert not db.execute("SELECT name FROM sqlite_master WHERE name='preview_isolation_probe'").fetchall()
+            assert "smoke frontend one" in read(ports[1], "/login")
+            marker = second / "smoke-untracked.txt"
+            marker.write_text("source changed")
+            assert command(second, "status")["sourceChanged"]
+            command(second, "up", success=False)
+            marker.unlink()
+            (frontend / "index.html").write_text("<html>smoke frontend two</html>")
+            assert command(second, "status")["frontendChanged"]
+            assert "smoke frontend one" in read(ports[1], "/login")  # staged, never live-linked
+            refreshed = command(second, "refresh")
+            assert refreshed["buildId"] != other["buildId"]
+            assert not refreshed["frontendChanged"] and not refreshed["sourceChanged"]
+            assert "smoke frontend two" in read(ports[1], "/login")
+            assert json.loads(Path(refreshed["credentialsFile"]).read_text()) == other_credentials
+            command(second, "stop")
+            stopped = command(second, "status")
+            assert not stopped["running"] and not stopped["local"]["ok"]
+            assert command(ROOT, "status")["local"]["ok"]
+            command(second, "destroy")
+            assert not Path(other["instanceDir"]).exists()
+            command(second, "destroy", "--if-exists")
+            # A released slot can be reused without reusing the old instance/data.
+            replacement = command(second, "up", "--slot", "1")
+            assert replacement["instanceDir"] != other["instanceDir"]
+            print(json.dumps({"result": "passed", "checks": ["two worktrees", "slot ownership",
+                "private credentials and DB", "dirty source detection", "frontend staging and drift",
+                "refresh preserves account", "stop isolation", "destroy/idempotence", "slot reuse"],
+                "firstBuildId": first["buildId"], "secondBuildId": refreshed["buildId"]}, indent=2))
+        finally:
+            for root in (second, ROOT):
+                if (root / "scripts/preview.py").exists():
+                    command(root, "destroy", "--if-exists")
+            subprocess.run(["git", "worktree", "remove", "--force", str(second)], cwd=ROOT, check=True)
+
+
+if __name__ == "__main__":
+    main()
