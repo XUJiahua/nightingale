@@ -18,7 +18,7 @@ def main():
     if not base:
         result = subprocess.run(["git", "merge-base", "HEAD", "main"], cwd=ROOT, capture_output=True, text=True)
         base = result.stdout.strip() if result.returncode == 0 else "HEAD"
-    changed = subprocess.check_output(["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", base], cwd=ROOT)
+    changed = subprocess.check_output(["git", "diff", "--name-only", "--diff-filter=ACMRD", "-z", base], cwd=ROOT)
     changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=ROOT)
     files = {os.fsdecode(p) for p in changed.split(b"\0") if p}
     go_files = sorted(p for p in files if p.endswith(".go") and not p.startswith("front/statik/") and (ROOT / p).is_file())
