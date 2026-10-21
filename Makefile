@@ -1,4 +1,4 @@
-.PHONY: prebuild build verify verify-all preview preview-refresh preview-status preview-url preview-stop preview-destroy
+.PHONY: prebuild build verify verify-all frontend-install frontend-build frontend-verify frontend-e2e preview preview-refresh preview-status preview-url preview-stop preview-destroy
 .PHONY: stable stable-refresh stable-status stable-url stable-stop
 
 ROOT:=$(shell pwd -P)
@@ -10,9 +10,19 @@ RELEASE_VERSION:="$(TAG)-$(GIT_COMMIT)"
 all: prebuild build
 
 prebuild:
-	echo "begin download and embed the front-end file..."
 	sh fe.sh
-	echo "front-end file download and embedding completed."
+
+frontend-install:
+	python3 -B scripts/frontend.py install
+
+frontend-build:
+	python3 -B scripts/frontend.py build
+
+frontend-verify:
+	python3 -B scripts/frontend.py verify
+
+frontend-e2e:
+	python3 -B scripts/frontend.py e2e
 
 build:
 	go build -ldflags "-w -s -X github.com/ccfos/nightingale/v6/pkg/version.Version=$(RELEASE_VERSION)" -o n9e ./cmd/center/main.go
@@ -45,7 +55,7 @@ verify:
 	python3 -B scripts/verify.py
 
 verify-all:
-	python3 -B scripts/verify.py --integrations --vet
+	python3 -B scripts/verify.py --integrations --vet --frontend
 
 preview:
 	python3 -B scripts/preview.py up

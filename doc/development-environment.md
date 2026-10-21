@@ -2,10 +2,12 @@
 
 开发预览以 Linux 为目标。准备 Git、make、Go 1.25（或满足 go.mod 的版本）、Python
 3.11+。部分测试用 cgo SQLite，需要 C 编译器，Ubuntu 可安装 build-essential。
-普通预览不需要 Node、Docker、外部数据库或重新下载前端。
+普通预览需要固定的 Node 24 + pnpm 来构建同仓前端，不需要 Docker、外部数据库或下载上游 UI。
+前端工具链与安装见[前端开发](frontend-development.md)。
 
 ```bash
 go mod download
+make frontend-install
 bash scripts/install-git-hooks.sh
 make verify
 ```
@@ -116,5 +118,5 @@ ClickHouse、VictoriaLogs，设置强制开关后运行四个相关包，避免 
 该开关仅约束上述四类服务，不会启用需要真实通知凭据或 sandbox 能力的其他专项测试。
 
 full profile 需要 Docker、构建脚本要求的网络和 Linux 隔离能力，构建本架构 sandbox
-资源与 QA 语料，显式固定 FE_REF、CATEGRAF_REF。常规检查不构建跨架构发布资源，
+资源与 QA 语料，显式固定 CATEGRAF_REF；前端语料来自同仓源码。常规检查不构建跨架构发布资源，
 发布验证仍由现有 GoReleaser workflow 承担。前端版本配对见[运行手册](worktree-preview.md)。

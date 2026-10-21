@@ -77,11 +77,13 @@ Ready 不替代告警业务、真实模型和人工验收。
 
 ## 前端与完整能力
 
-普通模式使用已提交 statik，记录 SHA256，不运行下载 latest 的 fe.sh。
-UI 联调先在 n9e/fe 按其规则构建，再提供产物和 revision：
+普通模式默认用固定 Node 24 + pnpm 构建同仓 `frontend/`，复制 `frontend/pub/` 到实例，
+记录源码、锁文件、工具链及资源摘要。没有同仓前端的旧分支才使用 committed statik；
+构建失败不能退回旧包。详见[前端开发](frontend-development.md)。
+外部 UI 联调需先构建，再显式提供产物和 revision：
 
 ```bash
-python3 -B scripts/preview.py refresh --frontend-dir /absolute/path/to/fe/dist --frontend-ref <commit-or-tag>
+python3 -B scripts/preview.py refresh --frontend-dir /absolute/path/to/fe/pub --frontend-ref <commit-or-tag>
 ```
 
 管理器将产物复制到实例，记录摘要；status 检查源产物是否变化。refresh 保留选择，
@@ -90,12 +92,12 @@ python3 -B scripts/preview.py refresh --frontend-dir /absolute/path/to/fe/dist -
 完整能力模式构建 sandbox、QA 代码语料：
 
 ```bash
-FE_REF=<frontend-tag> CATEGRAF_REF=<collector-tag> \
+CATEGRAF_REF=<collector-tag> \
   python3 -B scripts/preview.py refresh --profile full
 ```
 
-配对 UI 时同时传入对应 tag 的 frontend-dir/ref。没有替换 UI 时 statik 摘要和
-QA manifest 分别记录，不能宣称天然同版。full 设置 RequireIsolation=true，主机
+QA 前端语料固定来自同仓 `frontend/src/`，不再通过 FE_REF/FE_LOCAL 取外部源码。
+显式外部 UI 的产物与同仓 QA 语料需分别记录，不能宣称天然同版。full 设置 RequireIsolation=true，主机
 没有隔离能力时拒绝脚本运行，不能降级 unsafe；实际脚本执行仍需专项验证。
 切回轻量模式用 `refresh --profile basic`。
 

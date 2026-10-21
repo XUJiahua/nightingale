@@ -25,6 +25,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.node-version
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
       - name: Verify
         env:
           N9E_VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD' }}

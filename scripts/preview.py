@@ -196,6 +196,13 @@ def inspect(binding, public=True):
             result["frontendChanged"] = tree_digest(binding["frontendDir"]) != manifest.get("frontend", {}).get("sha256")
         except OSError:
             result["frontendChanged"] = True
+    elif manifest.get("frontend", {}).get("kind") == "in-tree":
+        try:
+            fingerprint = run([sys.executable, "-B", "scripts/frontend.py", "source"], stdout=subprocess.PIPE).stdout.decode().strip()
+            result["frontendChanged"] = (fingerprint != manifest["frontend"]["sourceSha256"]
+                or tree_digest(ROOT / "frontend/pub") != manifest["frontend"]["sha256"])
+        except (OSError, subprocess.CalledProcessError, KeyError):
+            result["frontendChanged"] = True
     result["local"] = probe(f"http://127.0.0.1:{binding['port']}", result["buildId"]) if result["running"] else {"ok": False}
     if public and binding.get("url"):
         result["public"] = probe(binding["url"], result["buildId"])
@@ -304,7 +311,7 @@ IP = "127.0.0.1"
 EngineName = "preview-{binding['instance']}"
 Interval = 1000
 [Center]
-UseFileAssets = {str(bool(binding.get('frontendDir'))).lower()}
+UseFileAssets = {str(bool(binding.get('frontendDir') or binding.get('inTreeFrontend'))).lower()}
 MetricsYamlFile = {json.dumps(str(ROOT / 'etc/metrics.yaml'))}
 BuiltinIntegrationsDir = {json.dumps(str(ROOT / 'integrations'))}
 I18NHeaderKey = "X-Language"
@@ -331,21 +338,27 @@ def build(binding, profile):
     binding["profile"] = profile
     tags = []
     if profile == "full":
-        # FE_REF/CATEGRAF_REF must be pinned, rather than resolve latest twice.
-        if not os.environ.get("FE_REF") or not os.environ.get("CATEGRAF_REF"):
-            raise RuntimeError("full profile requires pinned FE_REF and CATEGRAF_REF")
+        # The frontend corpus comes from this checkout; the collector stays pinned.
+        if not os.environ.get("CATEGRAF_REF"):
+            raise RuntimeError("full profile requires pinned CATEGRAF_REF")
         run(["bash", "scripts/build-sandbox-assets.sh"])
         run(["bash", "scripts/build-qa-code-assets.sh"])
         tags = ["-tags=sandbox_embed,qa_code_embed"]
+    binding["inTreeFrontend"] = (ROOT / "frontend/package.json").is_file() and not binding.get("frontendDir")
+    frontend_build = None
+    if binding["inTreeFrontend"]:
+        with (directory / "frontend-build.log").open("w") as log:
+            run([sys.executable, "-B", "scripts/frontend.py", "build"], stdout=log, stderr=log)
+        frontend_build = json.loads((ROOT / "frontend/.build-manifest.json").read_text())
     source = source_identity()
     build_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + secrets.token_hex(4)
     app_version = git("describe", "--tags", "--always") if binding.get("role") == "stable" else "preview-" + build_id
     frontend = {"kind": "committed-statik", "sha256": digest(ROOT / "front/statik/statik.go")}
-    if binding.get("frontendDir"):
-        origin = Path(binding["frontendDir"])
+    if binding.get("frontendDir") or binding["inTreeFrontend"]:
+        origin = Path(binding["frontendDir"]) if binding.get("frontendDir") else ROOT / "frontend/pub"
         if not (origin / "index.html").is_file():
             raise RuntimeError("frontend directory must contain the built index.html")
-        frontend = {"kind": "file-assets", "ref": binding["frontendRef"], "sha256": tree_digest(origin)}
+        frontend = frontend_build or {"kind": "file-assets", "ref": binding["frontendRef"], "sha256": tree_digest(origin)}
         dest = directory / "run/pub"
         if dest.exists():
             shutil.rmtree(dest)

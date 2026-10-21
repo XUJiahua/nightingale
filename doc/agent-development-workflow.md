@@ -124,7 +124,7 @@ python3 --version
 
 任务描述包含场景、期望行为、范围和可观察的验收步骤。简单修改直接实施；跨模块、
 跨仓库或迁移任务先明确顺序和验收点。保留已有修改归属，记录基线失败。
-Paseo setup 只配置 hooks，install 下载 Go 模块，预览按需构建。
+Paseo setup 只配置 hooks，install 下载 Go 模块并冻结安装前端依赖，预览按需构建。
 
 ## Agent 的审查与测试职责
 
@@ -175,12 +175,12 @@ n9e-plus 使用；优先扩展字段或 setter，保持签名兼容。
 | 集成模板 | action 检查、全部 en_US 渲染检查 |
 | MCP/A2A/AI | 身份作用域、读写边界、流式取消；真实模型单独验收 |
 | Skill 脚本 | 真实隔离引擎及专项执行验证 |
-| 前端 | 指定 n9e/fe revision 和产物；浏览器成功、失败、恢复路径 |
+| 前端 | 同仓 frontend/、固定 Node 24 + pnpm、冻结安装及源码/产物摘要；浏览器成功、失败、恢复路径 |
 
 先跑相关行为测试，再执行 `make verify`：改动 Go 文件格式、预览设施测试、
 `go build ./...`、`go test ./...`，按变更范围执行集成检查。
 `make verify-all` 另含 `go vet ./...` 和两个完整集成检查。CI、Paseo 和 pre-push
-复用同一入口。部分 dskit 测试需要外部服务，失败要记录缺失环境和具体结果；
+复用同一入口。前端源码或接口相关变动还执行同仓前端构建和 Jest，`make verify-all` 强制包含前端；命令和 E2E 见[前端开发](frontend-development.md)。部分 dskit 测试需要外部服务，失败要记录缺失环境和具体结果；
 外部服务测试按显式环境变量启用，未配置时逐项 skip 并报告原因；CI 的独立外部集成
 任务强制提供配置。SQLite 单测不代表其他数据库验证通过，默认检查通过也不能把
 跳过的测试称为通过。变量与隔离要求见[专项环境](development-environment.md#专项环境)。

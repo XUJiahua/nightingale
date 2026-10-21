@@ -96,6 +96,7 @@ def main():
                     dest.unlink()
             first = command(ROOT, "up", "--slot", "0")
             assert first["local"]["ok"] and not first["sourceChanged"]
+            assert first["frontend"]["kind"] == "in-tree" and not first["frontendChanged"]
             check_access_boundaries(ports[0])
             command(second, "up", "--slot", "0", success=False)
             frontend = base / "frontend"
@@ -149,11 +150,12 @@ def main():
             assert not Path(other["instanceDir"]).exists()
             command(second, "destroy", "--if-exists")
             # A released slot can be reused without reusing the old instance/data.
-            replacement = command(second, "up", "--slot", "1")
+            replacement = command(second, "up", "--slot", "1", "--frontend-dir", str(frontend),
+                                  "--frontend-ref", "smoke-fixture")
             assert replacement["instanceDir"] != other["instanceDir"]
             print(json.dumps({"result": "passed", "checks": ["two worktrees", "slot ownership",
                 "host auth environment isolation", "internal APIs blocked", "anonymous/spoofed profile rejected",
-                "private credentials and DB", "dirty source detection", "frontend staging and drift",
+                "private credentials and DB", "dirty source detection", "in-tree frontend identity", "frontend staging and drift",
                 "refresh after password change preserves account and roles", "initial password rejected",
                 "stop isolation", "destroy/idempotence", "slot reuse"],
                 "firstBuildId": first["buildId"], "secondBuildId": refreshed["buildId"]}, indent=2))

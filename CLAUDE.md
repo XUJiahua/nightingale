@@ -7,7 +7,7 @@ for task execution, environment setup and worktree previews.
 
 ## What this is
 
-Nightingale (n9e) is an open-source alerting/monitoring platform. Go module `github.com/ccfos/nightingale/v6`, Go 1.25, gin + gorm. The frontend lives in a separate repo (`n9e/fe`) and is embedded at build time as a statik bundle. A commercial fork (`flashcatcloud/n9e-plus`) imports this module and calls into `center.Initialize`-style entry points, so **exported function signatures that plus calls (e.g. `alert.Start`, `centerrt.New`, `BuildNotifyContext`) are effectively public API** — prefer adding fields/setters over changing parameter lists (see comments in `center/center.go` and `alert/alert.go`).
+Nightingale (n9e) is an open-source alerting/monitoring platform. Go module `github.com/ccfos/nightingale/v6`, Go 1.25, gin + gorm. The React/TypeScript frontend lives in `frontend/`, imported from a pinned `n9e/fe` commit (see `frontend/UPSTREAM.md`). Node 24 and pnpm versions are pinned in `frontend/.node-version` and `frontend/package.json`. Preview builds and serves its local `pub/`; release builds embed the same local assets as statik. The committed `front/statik/statik.go` supports Go-only builds and must be refreshed with `sh fe.sh` when shipping UI changes. Frontend commands and evidence are documented in `doc/frontend-development.md`. A commercial fork (`flashcatcloud/n9e-plus`) imports this module and calls into `center.Initialize`-style entry points, so **exported function signatures that plus calls (e.g. `alert.Start`, `centerrt.New`, `BuildNotifyContext`) are effectively public API** — prefer adding fields/setters over changing parameter lists (see comments in `center/center.go` and `alert/alert.go`).
 
 ## Commands
 
@@ -22,7 +22,10 @@ make preview-status                  # build identity and local/public probes
 make stable-status                   # independent main instance (n9e.cubbber.dev)
 make build                           # ./n9e  (cmd/center, embeds version via ldflags)
 make build-edge | build-alert | build-pushgw | build-cli
-sh fe.sh                             # download latest n9e/fe release into ./pub and regenerate front/statik (needs $GOPATH/bin/statik)
+make frontend-install                # frozen pnpm install with the pinned Node 24 toolchain
+make frontend-build                  # build frontend/pub, record source/lock/toolchain/assets identity
+make frontend-verify                 # frontend production build + Jest
+sh fe.sh                             # build in-tree UI and regenerate statik using the Go-pinned generator
 
 # Run locally
 ./n9e --configs etc.local            # etc.local* dirs are git-ignored per-developer configs; etc/ is the shipped default

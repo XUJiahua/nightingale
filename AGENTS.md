@@ -10,8 +10,9 @@ keep shared project architecture in CLAUDE.md rather than duplicating it here.
   by n9e-plus. Reads consumed by edge/alert need both DB and CenterApi paths.
 - Schema changes update gorm and applicable initialization/migration SQL,
   including PostgreSQL where applicable. SQLite tests do not prove other dialects.
-- Frontend source lives in n9e/fe. Plain Go builds use committed statik; do not
-  run `make all` or `fe.sh` as routine setup. Record any alternative frontend revision.
+- Follow [frontend development](doc/frontend-development.md) for Node 24 + pnpm,
+  frontend verification and paired assets. Plain Go builds use committed statik;
+  use preview or `make all` for current in-tree UI. Never download a release UI as fallback.
 - Run focused behavior tests during implementation, then `make verify`. Use
   `make verify-all` for vet and both full integration gates. Report existing
   failures and skipped tests; never present them as passes.

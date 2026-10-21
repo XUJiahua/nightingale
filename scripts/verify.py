@@ -43,12 +43,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--integrations", action="store_true", help="also run both integration template gates")
     parser.add_argument("--vet", action="store_true", help="include go vet (existing baseline issues are reported)")
+    parser.add_argument("--frontend", action="store_true", help="also build and test the frontend regardless of changed paths")
     args = parser.parse_args()
     base = os.environ.get("N9E_VERIFY_BASE")
     if not base:
         result = subprocess.run(["git", "merge-base", "HEAD", "main"], cwd=ROOT, capture_output=True, text=True)
         base = result.stdout.strip() if result.returncode == 0 else "HEAD"
-    changed = subprocess.check_output(["git", "diff", "--name-only", "--diff-filter=ACMRD", "-z", base], cwd=ROOT)
+    changed = subprocess.check_output(["git", "diff", "--no-renames", "--name-only", "--diff-filter=ACMRD", "-z", base], cwd=ROOT)
     changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=ROOT)
     files = {os.fsdecode(p) for p in changed.split(b"\0") if p}
     go_files = sorted(p for p in files if p.endswith(".go") and not p.startswith("front/statik/") and (ROOT / p).is_file())
@@ -60,6 +61,10 @@ def main():
             failures.append("format")
     checks = [("preview tests", ["python3", "-B", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"]),
               ("build", ["go", "build", "./..."]), ("tests", ["go", "test", "-json", "./..."])]
+    frontend_paths = ("frontend/", "scripts/frontend.py", "scripts/preview.py", "fe.sh", "Makefile",
+                      ".goreleaser.yaml", ".github/workflows/", "center/router/", "models/")
+    if args.frontend or any(p.startswith(frontend_paths) for p in files):
+        checks.append(("frontend", ["python3", "-B", "scripts/frontend.py", "verify"]))
     if args.vet:
         checks.append(("vet", ["go", "vet", "./..."]))
     if args.integrations or any(p.startswith(("integrations/", "center/integration/", "cmd/integrations-")) for p in files):

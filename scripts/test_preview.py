@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sqlite3
 import socket
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -37,6 +38,30 @@ class PreviewTest(unittest.TestCase):
                 for section in ("APIForService", "APIForAgent", "ProxyAuth"):
                     self.assertIs(config["HTTP"].get(section, {}).get("Enable"), False, section)
                 self.assertIs(config["HTTP"]["TokenAuth"]["Enable"], True)
+
+    def test_in_tree_preview_detects_ignored_frontend_configuration_changes(self):
+        root = self.state / "repo"
+        (root / "scripts").mkdir(parents=True)
+        (root / "frontend/pub").mkdir(parents=True)
+        shutil.copyfile(Path(__file__).with_name("frontend.py"), root / "scripts/frontend.py")
+        (root / "frontend/.gitignore").write_text(".env*\npub/\n")
+        (root / "frontend/pub/index.html").write_text("compiled UI")
+        for args in (("init", "-qb", "main"), ("add", "."),
+                     ("-c", "user.name=Preview Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "baseline")):
+            subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+        binding = {"instance": "config-drift", "slot": 0, "port": 1}
+        directory = preview.instance(binding)
+        directory.mkdir(parents=True)
+        fingerprint = subprocess.check_output(["python3", "-B", "scripts/frontend.py", "source"], cwd=root).decode().strip()
+        with patch.object(preview, "ROOT", root):
+            manifest = {"source": preview.source_identity(), "frontend": {"kind": "in-tree",
+                        "sourceSha256": fingerprint, "sha256": preview.tree_digest(root / "frontend/pub")}}
+            (directory / "manifest.json").write_text(json.dumps(manifest))
+            self.assertFalse(preview.inspect(binding, public=False)["frontendChanged"])
+            (root / "frontend/.env.production").write_text("VITE_PREFIX=/changed")
+            status = preview.inspect(binding, public=False)
+            self.assertFalse(status["sourceChanged"])
+            self.assertTrue(status["frontendChanged"])
 
     def test_slot_zero_is_valid_and_binding_cannot_be_stolen(self):
         with socket.socket() as sock:
