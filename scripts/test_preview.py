@@ -11,6 +11,8 @@ import tomllib
 import unittest
 from unittest.mock import patch
 
+from git_test_support import git_fixture_environment
+
 spec = importlib.util.spec_from_file_location("preview", Path(__file__).with_name("preview.py"))
 preview = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preview)
@@ -18,6 +20,8 @@ spec.loader.exec_module(preview)
 
 class PreviewTest(unittest.TestCase):
     def setUp(self):
+        # Cover both fixture setup and preview's Git calls when ROOT is patched.
+        self.enterContext(patch.dict(os.environ, git_fixture_environment(), clear=True))
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.state = Path(self.temp.name)

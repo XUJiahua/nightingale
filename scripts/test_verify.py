@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from git_test_support import git_fixture_environment
+
 spec = importlib.util.spec_from_file_location("verify", Path(__file__).with_name("verify.py"))
 verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)
@@ -17,6 +19,8 @@ spec.loader.exec_module(verify)
 
 class VerifyTest(unittest.TestCase):
     def setUp(self):
+        # A hook's repository selection must not escape into temporary fixtures.
+        self.enterContext(patch.dict(os.environ, git_fixture_environment(), clear=True))
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

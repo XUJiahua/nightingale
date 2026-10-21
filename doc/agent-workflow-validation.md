@@ -1,5 +1,32 @@
 # AI 开发设施验证记录
 
+## 2026-10-21 pre-push 临时 Git 仓库隔离修复
+
+首次实际推送暴露了 hook 环境污染：Python 测试只通过 `cwd` 选择临时仓库，
+却继承了指向真实 worktree 的 Git 仓库变量，导致测试提交、索引和配置写入真实仓库。
+此前临时包装 hook 清理环境后推送成功，只是规避，不算原始门禁通过。
+
+本次保留 `.githooks/pre-push` 和 `scripts/verify.py`，在两个测试类的 setup 中按
+`git rev-parse --local-env-vars` 清理仓库环境，并在测试结束后恢复调用者环境。
+隔离覆盖临时仓库初始化及被测代码切换 ROOT 后的 Git 调用；其他环境设置保留。
+
+新增回归测试创建一次性宿主仓库及 linked worktree，注入指向宿主的 Git 环境变量，
+运行原有两个测试套件，核对 HEAD、本地引用、主 checkout/worktree 索引、共享配置
+和工作区文件均未变化。修复前已运行并得到 `fixture suites modified the hook's repository`
+失败；加入隔离后通过。
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| `python3 -B -m unittest discover -s scripts -p 'test_*.py'` | 18 项通过，包含宿主仓库状态保持不变的回归检查 |
+| `make verify` | 退出 0；Go 2605 passed、0 failed、39 skipped（包含子测试） |
+| 一次性 linked worktree 向本地 bare 远端执行普通 `git push` | 原始 pre-push 执行完整 `make verify` 后退出 0；本地 HEAD、分支、索引和配置不变 |
+| 在上述一次性 worktree 加入故意失败的测试后再次普通推送 | pre-push 退出 1，显示 `intentional pre-push rejection`；远端仍为上次成功的提交，本地元数据不变 |
+
+两次推送均使用仓库原有 hook 和安装器，没有替换 hooksPath、包装器或跳过检查。
+一次性 checkout、worktree 和 bare 远端均已清理，未连接公网预览或稳定实例。
+本轮没有执行 `make verify-all`、浏览器或人工产品验收；39 项 skip 不计作已验证。
+此修复仅处理 Git 测试隔离，PR 中另外三项 P2 仍待处理。
+
 ## 2026-10-21 测试门禁修复补充
 
 以下为 elegant-mole 在 `3bf1533a` 之后的工作区检查结果；后面的 2026-10-20
