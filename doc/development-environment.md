@@ -94,6 +94,27 @@ MySQL/PostgreSQL/外部 Redis 测试另用隔离库和独立命名空间。现�
 含固定容器名和端口，不能原样并行运行；需独立 Compose project、容器名、端口和
 volume。普通预览管理器只管理 SQLite，不会自动连接外部服务。
 
+外部集成测试只在明确配置下运行；未配置时仅跳过相应测试，包内单元测试照常执行。
+配置后连接、认证、SQL 或断言失败仍会失败，不会自动降级为 skip。
+
+| 环境变量 | 测试依赖 |
+| --- | --- |
+| `N9E_TEST_MYSQL_DSN` | Go MySQL TCP DSN，包含专用测试库名；账号可创建/删除临时数据库和表 |
+| `N9E_TEST_POSTGRES_DSN` | `host=... port=... user=... password=... dbname=postgres sslmode=disable` 格式；账号可创建/删除临时数据库 |
+| `N9E_TEST_CLICKHOUSE_ADDR` | HTTP 协议的 `host:port`；可选 `N9E_TEST_CLICKHOUSE_USER`（默认 default）、`N9E_TEST_CLICKHOUSE_PASSWORD` |
+| `N9E_TEST_VICTORIALOGS_URL` | 一次性 VictoriaLogs 的完整 HTTP URL |
+| `N9E_REQUIRE_EXTERNAL_TESTS=1` | 缺少上述任一必需配置时失败，用于强制外部集成门禁 |
+
+DSN 仅指向一次性测试服务，不使用生产配置。MySQL 数据源测试自建临时表；ormx
+测试使用随机数据库名并清理；SQLite 使用临时目录，不需要外部环境变量。原迁移
+目录的手工权限写入脚本已改为 SQLite 下真实权限绑定操作的幂等测试。
+
+`make verify` / `make verify-all` 显示 Go 测试的通过、失败与跳过数量（包含子测试），
+并列出 skip 原因。默认检查通过不表示跳过的外部服务已验证。GitHub verify workflow
+另有必跑的 `external-tests` 任务：使用固定版本的一次性 MySQL、PostgreSQL、
+ClickHouse、VictoriaLogs，设置强制开关后运行四个相关包，避免 CI 静默跳过。
+该开关仅约束上述四类服务，不会启用需要真实通知凭据或 sandbox 能力的其他专项测试。
+
 full profile 需要 Docker、构建脚本要求的网络和 Linux 隔离能力，构建本架构 sandbox
 资源与 QA 语料，显式固定 FE_REF、CATEGRAF_REF。常规检查不构建跨架构发布资源，
 发布验证仍由现有 GoReleaser workflow 承担。前端版本配对见[运行手册](worktree-preview.md)。

@@ -42,6 +42,10 @@ go run ./cmd/integrations-i18n check -scope all  # en_US rendering of templates 
 PR CI, Paseo verify and pre-push use `make verify`, alongside the existing
 integration and evidence gates. Releases use GoReleaser on tags. There is no
 golangci-lint configuration; `make verify-all` includes go vet and reports baseline failures.
+External service tests skip only when their explicit `N9E_TEST_*` configuration is absent;
+configured failures remain failures. The separate CI external-tests job sets
+`N9E_REQUIRE_EXTERNAL_TESTS=1` and provisions disposable services. See the
+[test environment variables](doc/development-environment.md#专项环境).
 
 ## Process topology
 

@@ -1,5 +1,28 @@
 # AI 开发设施验证记录
 
+## 2026-10-21 测试门禁修复补充
+
+以下为 elegant-mole 在 `3bf1533a` 之后的工作区检查结果；后面的 2026-10-20
+基线失败表保留历史证据，不代表当前仍有同样失败。
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| `make verify`，未配置外部服务 | 退出 0；Go 2603 passed、0 failed、39 skipped（包含子测试）；逐项显示 skip 原因 |
+| 配置一次性服务并设置 `N9E_REQUIRE_EXTERNAL_TESTS=1` 后 `make verify-all` | 退出 0；Go 2622 passed、0 failed、20 skipped；build、vet、两个全量集成模板门禁通过 |
+| 四个外部依赖包专项测试 | MySQL 8.4.7、PostgreSQL 17.7、ClickHouse 23.8、VictoriaLogs 1.53.0；67 passed、0 failed、0 skipped |
+| `go test ./pkg/promql ./pushgw/pconf ./pushgw/writer -count=30` | 通过；消除 map 顺序偶发失败并覆盖条件精确/正则/组合/缺失标签/非法配置 |
+| 同三个包 `-race -count=1` | 通过 |
+| Python 设施测试 | 16 项通过，包括验证入口对 fail/skip 的汇总和退出码保留 |
+| 缺少强制配置与已配置服务不可达 | 缺配置强制测试失败；四种服务的不可达配置分别失败，无 skip |
+
+默认环境额外跳过 19 项外部服务测试；配置服务后保留的 20 项 skip 属于真实通知
+凭据、sandbox/网络隔离等其他专项条件，本轮没有把它们记为通过。四种服务使用
+独立容器、随机回环端口和一次性数据，不接入现有数据库或预览数据。CI 新增强制
+外部集成任务；本轮验证了本机同版本镜像和健康命令，尚未在 GitHub 执行该任务。
+本轮未做浏览器、人工产品验收或发布。
+
+## 2026-10-20 初始设施验证
+
 验证日期：2026-10-20。Linux amd64，Go 1.25.7，Python 3.12.3。
 基础提交：97fe92976009b12a206d145e59a1ad4fddf5fbc3，实施分支 elegant-mole。
 验证基于实施时的工作区快照，实际运行版本以 `make preview-status` 的 commit、源码指纹与 build ID 为准。

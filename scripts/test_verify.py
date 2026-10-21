@@ -2,6 +2,7 @@
 from contextlib import redirect_stdout
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -64,6 +65,23 @@ class VerifyTest(unittest.TestCase):
 
     def test_deleted_go_file_runs_gates_without_gofmt(self):
         self.assert_deletion_runs_integration_gates("center/integration/removed.go")
+
+    def test_go_test_summary_reports_skips_and_preserves_failure(self):
+        events = [
+            {"Action": "output", "Package": "example", "Test": "TestExternal",
+             "Output": "missing test service configuration\n"},
+            {"Action": "skip", "Package": "example", "Test": "TestExternal"},
+            {"Action": "pass", "Package": "example", "Test": "TestUnit"},
+            {"Action": "output", "Package": "example", "Test": "TestBroken", "Output": "assertion failed\n"},
+            {"Action": "fail", "Package": "example", "Test": "TestBroken"},
+        ]
+        result = subprocess.CompletedProcess([], 1, stdout="\n".join(json.dumps(e) for e in events))
+        output = io.StringIO()
+        with patch.object(verify.subprocess, "run", return_value=result), redirect_stdout(output):
+            self.assertEqual(verify.run_go_tests(["go", "test", "-json", "./..."]), 1)
+        self.assertIn("1 passed, 1 failed, 1 skipped", output.getvalue())
+        self.assertIn("missing test service configuration", output.getvalue())
+        self.assertIn("assertion failed", output.getvalue())
 
 
 if __name__ == "__main__":
