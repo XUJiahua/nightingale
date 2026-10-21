@@ -15,7 +15,94 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ccfos/nightingale/v6/conf"
+	"github.com/ccfos/nightingale/v6/pkg/cfg"
 )
+
+func TestPreviewChildEnvironment(t *testing.T) {
+	directory := t.TempDir()
+	for name, value := range map[string]string{
+		"CONFIGTYPE_HTTP_APIFORSERVICE_ENABLE": "true",
+		"CONFIGTYPE_HTTP_APIFORAGENT_ENABLE":   "true",
+		"CONFIGTYPE_HTTP_PROXYAUTH_ENABLE":     "true",
+		"CONFIGTYPE_CENTER_DEMOLOGIN_ENABLE":   "true",
+		"N9E_CONFIGS":                          "/host/config",
+		"AWS_SECRET_ACCESS_KEY":                "test-only-secret",
+		"BASH_ENV":                             "/host/shell-hook",
+		"HTTP_PROXY":                           "http://host-proxy.invalid:8080",
+		"HOME":                                 "/host/home",
+		"TMPDIR":                               "/host/tmp",
+		"LANG":                                 "C.UTF-8",
+		"TZ":                                   "UTC",
+	} {
+		t.Setenv(name, value)
+	}
+	if err := os.Mkdir(filepath.Join(directory, "etc"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Omit the auth switches so the real config loader detects environment leaks,
+	// independently of the explicit switches in the generated preview config.
+	if err := os.WriteFile(filepath.Join(directory, "etc/config.toml"), []byte("[HTTP]\nHost = '127.0.0.1'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := manifest{Binary: executable, RunDir: directory, TempDir: filepath.Join(directory, "tmp")}
+	command := previewCommand(m)
+	command.Args = []string{executable, "-test.run=^TestPreviewChildEnvironmentHelper$"}
+	command.Env = append(command.Env, "N9E_PREVIEW_ENV_HELPER=1")
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("child config check failed: %v", err)
+	}
+	var result struct {
+		Service, Agent, Proxy, Demo bool
+		Leaked                      []string
+		Home, Temp, Path, Lang, TZ  string
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode child config check: %v", err)
+	}
+	if result.Service || result.Agent || result.Proxy || result.Demo {
+		t.Errorf("host environment enabled child auth settings: service=%v agent=%v proxy=%v demo=%v",
+			result.Service, result.Agent, result.Proxy, result.Demo)
+	}
+	if len(result.Leaked) != 0 {
+		t.Errorf("host variables leaked into child: %v", result.Leaked)
+	}
+	if result.Home != m.RunDir || result.Temp != m.TempDir {
+		t.Error("child HOME/TMPDIR do not belong to this instance")
+	}
+	if result.Path != os.Getenv("PATH") || result.Lang != "C.UTF-8" || result.TZ != "UTC" {
+		t.Error("required runtime environment was not preserved")
+	}
+}
+
+func TestPreviewChildEnvironmentHelper(t *testing.T) {
+	if os.Getenv("N9E_PREVIEW_ENV_HELPER") != "1" {
+		return
+	}
+	var config conf.ConfigType
+	if err := cfg.LoadConfigByDir("etc", &config); err != nil {
+		t.Fatal(err)
+	}
+	leaked := []string{}
+	for _, name := range []string{"N9E_CONFIGS", "AWS_SECRET_ACCESS_KEY", "BASH_ENV", "HTTP_PROXY"} {
+		if _, ok := os.LookupEnv(name); ok {
+			leaked = append(leaked, name)
+		}
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"Service": config.HTTP.APIForService.Enable, "Agent": config.HTTP.APIForAgent.Enable,
+		"Proxy": config.HTTP.ProxyAuth.Enable, "Demo": config.Center.DemoLogin.Enable,
+		"Leaked": leaked, "Home": os.Getenv("HOME"), "Temp": os.Getenv("TMPDIR"),
+		"Path": os.Getenv("PATH"), "Lang": os.Getenv("LANG"), "TZ": os.Getenv("TZ"),
+	})
+	os.Exit(0)
+}
 
 func TestReadinessAfterPasswordChange(t *testing.T) {
 	directory := t.TempDir()
@@ -198,11 +285,18 @@ func TestLocalOnlyEndpointsNeverForwarded(t *testing.T) {
 	defer backend.Close()
 	var ready atomic.Bool
 	ready.Store(true)
-	for _, route := range []string{"/prometheus/api/v1/write", "/dumper/sync", "/debug/pprof/", "/metrics", "/%70rometheus/api/v1/query", "/x/../prometheus/api/v1/query"} {
-		w := httptest.NewRecorder()
-		handler(manifest{BuildID: "new"}, backend.URL, &ready).ServeHTTP(w, httptest.NewRequest("GET", route, nil))
-		if w.Code != http.StatusForbidden {
-			t.Errorf("%s: status = %d", route, w.Code)
+	for _, route := range []string{
+		"/prometheus/api/v1/write", "/dumper/sync", "/debug/pprof/", "/metrics",
+		"/%70rometheus/api/v1/query", "/x/../prometheus/api/v1/query",
+		"/v1/n9e", "/v1/n9e/", "/v1/n9e/users", "/v1/n9e/user-token",
+		"/v1/%6e9e/users", "/v1%2fn9e/users", "//v1//n9e/users", "/x/../v1/n9e/users",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+			w := httptest.NewRecorder()
+			handler(manifest{BuildID: "new"}, backend.URL, &ready).ServeHTTP(w, httptest.NewRequest(method, route, nil))
+			if w.Code != http.StatusForbidden {
+				t.Errorf("%s %s: status = %d", method, route, w.Code)
+			}
 		}
 	}
 }

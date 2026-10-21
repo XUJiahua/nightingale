@@ -281,6 +281,12 @@ Port = {backend_port}
 PProf = false
 ExposeMetrics = false
 ShutdownTimeout = 20
+[HTTP.APIForService]
+Enable = false
+[HTTP.APIForAgent]
+Enable = false
+[HTTP.ProxyAuth]
+Enable = false
 [HTTP.TokenAuth]
 Enable = true
 [HTTP.JWTAuth]

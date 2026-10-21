@@ -38,6 +38,17 @@ Python 管理器用主机文件锁串行变更和重型构建。每个绑定具�
 preview.log、bin/ 和独立 run/ 工作目录（SQLite、TSDB、Skill、配置与日志）。
 Go 模块和编译缓存使用 Go 本身的共享机制。
 
+网关启动 n9e 时只继承 PATH、LANG、LC_ALL、LC_CTYPE、TZ、SSL_CERT_FILE 和
+SSL_CERT_DIR；HOME 指向实例 run/，TMPDIR 指向实例私有临时目录。不继承宿主的
+CONFIGTYPE_*、N9E_CONFIGS、代理变量或模型/云服务凭据。构建脚本仍使用调用者的
+构建环境；运行时所需的模型和数据源配置应在预览 UI 中显式设置。
+生成配置固定关闭 HTTP.APIForService、HTTP.APIForAgent 和 HTTP.ProxyAuth，
+两个 profile 都适用。网关同时拒绝 `/v1/n9e` 及其子路径，无论后端是否开启接口；
+网页登录、鉴权 UI API、MCP/A2A 和流式响应继续使用应用自身认证。
+这些措施用于阻断宿主配置泄漏与内部 API 公开，不提供容器或系统用户隔离。
+basic 只禁用 Skill 脚本，脚本通知等其他命令执行能力不属于该沙箱保护范围；
+预览管理员仍需可信，不能将实例目录独立等同于宿主机安全隔离。
+
 应用二进制放在 run/n9e，网关放在 bin/。toolkits 的 runner.Cwd 使用二进制所在
 目录，文件前端从该目录的 pub/ 读取，因此应用位置必须与实例工作目录一致。
 

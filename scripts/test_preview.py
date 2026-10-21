@@ -7,6 +7,7 @@ import sqlite3
 import socket
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -23,6 +24,15 @@ class PreviewTest(unittest.TestCase):
         patcher = patch.object(preview, "STATE", self.state)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_generated_config_disables_service_agent_and_proxy_auth(self):
+        for profile in ("basic", "full"):
+            with self.subTest(profile=profile):
+                binding = {"instance": "test-instance", "profile": profile}
+                config = tomllib.loads(preview.app_config(binding, 30300))
+                for section in ("APIForService", "APIForAgent", "ProxyAuth"):
+                    self.assertIs(config["HTTP"].get(section, {}).get("Enable"), False, section)
+                self.assertIs(config["HTTP"]["TokenAuth"]["Enable"], True)
 
     def test_slot_zero_is_valid_and_binding_cannot_be_stolen(self):
         with socket.socket() as sock:

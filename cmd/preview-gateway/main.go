@@ -168,10 +168,10 @@ func handler(m manifest, base string, ready *atomic.Bool) http.Handler {
 			http.Error(w, "Preview is starting; retry shortly.", http.StatusServiceUnavailable)
 			return
 		}
-		// A reverse proxy connects over loopback. Do not turn the application's
-		// local-only TSDB/debug endpoints into anonymous public endpoints.
+		// Internal service/agent APIs are never published by this gateway, even if
+		// enabled in the backend. Loopback-only TSDB/debug endpoints stay private too.
 		normalized := strings.ToLower(path.Clean("/" + r.URL.Path))
-		for _, prefix := range []string{"/prometheus", "/dumper", "/debug", "/metrics"} {
+		for _, prefix := range []string{"/v1/n9e", "/prometheus", "/dumper", "/debug", "/metrics"} {
 			if normalized == prefix || strings.HasPrefix(normalized, prefix+"/") {
 				http.Error(w, "Use authenticated Nightingale APIs for preview data.", http.StatusForbidden)
 				return
@@ -195,6 +195,20 @@ func handler(m manifest, base string, ready *atomic.Bool) http.Handler {
 	})
 }
 
+func previewCommand(m manifest) *exec.Cmd {
+	command := exec.Command(m.Binary, "--configs", "etc")
+	command.Dir = m.RunDir
+	// The config loader consumes CONFIGTYPE_* variables, and providers may read
+	// credentials from the environment. Inherit only these runtime settings.
+	command.Env = []string{"HOME=" + m.RunDir, "TMPDIR=" + m.TempDir}
+	for _, name := range []string{"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, ok := os.LookupEnv(name); ok {
+			command.Env = append(command.Env, name+"="+value)
+		}
+	}
+	return command
+}
+
 func serve(path string) error {
 	var m manifest
 	if err := readJSON(path, &m); err != nil {
@@ -203,9 +217,8 @@ func serve(path string) error {
 	base := fmt.Sprintf("http://127.0.0.1:%d", m.BackendPort)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	command := exec.Command(m.Binary, "--configs", "etc")
-	command.Dir, command.Stdout, command.Stderr = m.RunDir, os.Stdout, os.Stderr
-	command.Env = append(os.Environ(), "TMPDIR="+m.TempDir)
+	command := previewCommand(m)
+	command.Stdout, command.Stderr = os.Stdout, os.Stderr
 	// A killed gateway must not leave an orphaned database/TSDB writer.
 	command.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 	if err := command.Start(); err != nil {

@@ -12,6 +12,7 @@ import socket
 import sqlite3
 import subprocess
 import tempfile
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +33,11 @@ def main():
             raise RuntimeError("port collision; retry smoke check")
         (state / "config.json").write_text(json.dumps({"slots": [
             {"id": 0, "port": ports[0]}, {"id": 1, "port": ports[1]}]}))
-        env = {**os.environ, "N9E_PREVIEW_STATE": str(state), "PYTHONDONTWRITEBYTECODE": "1"}
+        env = {**os.environ, "N9E_PREVIEW_STATE": str(state), "PYTHONDONTWRITEBYTECODE": "1",
+               "CONFIGTYPE_HTTP_APIFORSERVICE_ENABLE": "true",
+               "CONFIGTYPE_HTTP_APIFORAGENT_ENABLE": "true",
+               "CONFIGTYPE_HTTP_PROXYAUTH_ENABLE": "true",
+               "CONFIGTYPE_HTTP_PROXYAUTH_HEADERUSERNAMEKEY": "X-Smoke-User"}
 
         def command(root, *args, success=True):
             result = subprocess.run(["python3", "-B", str(root / "scripts/preview.py"), *args],
@@ -60,6 +65,21 @@ def main():
             with opener.open(request, timeout=10) as response:
                 return json.load(response)
 
+        def check_access_boundaries(port):
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            for path, expected in (("/v1/n9e/users", 403), ("/v1/n9e/user-token", 403),
+                                   ("/prometheus/api/v1/query?query=vector(1)", 403),
+                                   ("/api/n9e/self/profile", 401)):
+                request = urllib.request.Request(f"http://127.0.0.1:{port}{path}",
+                                                 headers={"X-Smoke-User": "root"})
+                try:
+                    with opener.open(request, timeout=10) as response:
+                        status = response.status
+                except urllib.error.HTTPError as error:
+                    status = error.code
+                    error.close()
+                assert status == expected, f"{path}: expected {expected}, got {status}"
+
         subprocess.run(["git", "worktree", "add", "--detach", str(second), "HEAD"], cwd=ROOT, check=True,
                        stdout=subprocess.DEVNULL)
         try:
@@ -76,12 +96,14 @@ def main():
                     dest.unlink()
             first = command(ROOT, "up", "--slot", "0")
             assert first["local"]["ok"] and not first["sourceChanged"]
+            check_access_boundaries(ports[0])
             command(second, "up", "--slot", "0", success=False)
             frontend = base / "frontend"
             frontend.mkdir()
             (frontend / "index.html").write_text("<html>smoke frontend one</html>")
             other = command(second, "up", "--slot", "1", "--frontend-dir", str(frontend), "--frontend-ref", "smoke-fixture")
             assert other["local"]["ok"] and first["buildId"] != other["buildId"]
+            check_access_boundaries(ports[1])
             first_credentials = json.loads(Path(first["credentialsFile"]).read_text())
             other_credentials = json.loads(Path(other["credentialsFile"]).read_text())
             assert first_credentials != other_credentials
@@ -110,6 +132,7 @@ def main():
             refreshed = command(second, "refresh")
             assert refreshed["buildId"] != other["buildId"]
             assert not refreshed["frontendChanged"] and not refreshed["sourceChanged"]
+            check_access_boundaries(ports[1])
             assert "smoke frontend two" in read(ports[1], "/login")
             assert json.loads(Path(refreshed["credentialsFile"]).read_text()) == other_credentials
             assert not (Path(refreshed["instanceDir"]) / "login-check.pending").exists()
@@ -129,6 +152,7 @@ def main():
             replacement = command(second, "up", "--slot", "1")
             assert replacement["instanceDir"] != other["instanceDir"]
             print(json.dumps({"result": "passed", "checks": ["two worktrees", "slot ownership",
+                "host auth environment isolation", "internal APIs blocked", "anonymous/spoofed profile rejected",
                 "private credentials and DB", "dirty source detection", "frontend staging and drift",
                 "refresh after password change preserves account and roles", "initial password rejected",
                 "stop isolation", "destroy/idempotence", "slot reuse"],
