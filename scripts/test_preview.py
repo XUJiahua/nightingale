@@ -119,6 +119,8 @@ class PreviewTest(unittest.TestCase):
         directory = self.state / "instance"
         (directory / "run").mkdir(parents=True)
         preview.seed(directory)
+        pending = directory / "login-check.pending"
+        self.assertTrue(pending.exists())
         credentials = json.loads((directory / "credentials.json").read_text())
         self.assertNotEqual(credentials["password"], "root.2020")
         self.assertLess(len(credentials["password"]), 32)  # InitRoot encrypts a raw password.
@@ -127,7 +129,24 @@ class PreviewTest(unittest.TestCase):
             password = db.execute("select password from users where username='root'").fetchone()[0]
         self.assertEqual(password, credentials["password"])
         preview.seed(directory)
+        self.assertTrue(pending.exists())  # Failed initial startup must still verify login.
         self.assertEqual(json.loads((directory / "credentials.json").read_text()), credentials)
+
+    def test_existing_database_does_not_require_or_restore_initial_credentials(self):
+        directory = self.state / "instance"
+        (directory / "run").mkdir(parents=True)
+        preview.seed(directory)
+        # Verified instances and legacy instances both have no pending check.
+        (directory / "login-check.pending").unlink()
+        (directory / "credentials.json").unlink()
+        with sqlite3.connect(directory / "run/n9e.db") as db:
+            db.execute("UPDATE users SET password = ? WHERE username = 'root'", ("changed-password-hash",))
+        preview.seed(directory)
+        self.assertFalse((directory / "login-check.pending").exists())
+        self.assertFalse((directory / "credentials.json").exists())
+        with sqlite3.connect(directory / "run/n9e.db") as db:
+            self.assertEqual(db.execute("SELECT password FROM users WHERE username='root'").fetchone()[0],
+                             "changed-password-hash")
 
     def test_fingerprint_sees_dirty_untracked_and_ignored_but_tracked_files(self):
         root = self.state / "repo"

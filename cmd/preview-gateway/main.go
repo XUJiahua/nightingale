@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -109,7 +110,34 @@ func health(base string, m manifest) error {
 			return err
 		}
 	}
+	response, err := client.Get(base + "/api/n9e/self/profile")
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		return fmt.Errorf("anonymous profile probe expected HTTP 401, got %d", response.StatusCode)
+	}
 	return nil
+}
+
+func checkReady(base string, m manifest) error {
+	if err := health(base, m); err != nil {
+		return err
+	}
+	// Only newly seeded databases require an initial account check. The marker
+	// survives failed starts; once verified, user password changes are independent
+	// of readiness. Existing instances without a marker need no credential migration.
+	pending := filepath.Join(filepath.Dir(m.CredentialsFile), "login-check.pending")
+	if _, err := os.Stat(pending); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := checkLogin(base, m.CredentialsFile); err != nil {
+		return err
+	}
+	return os.Remove(pending)
 }
 
 func handler(m manifest, base string, ready *atomic.Bool) http.Handler {
@@ -216,8 +244,8 @@ func serve(path string) error {
 			done <- err // Keep completion available to the cleanup path.
 			return fmt.Errorf("n9e child exited: %v", err)
 		case <-ticker.C:
-			if !ready.Load() && health(base, m) == nil {
-				if err := checkLogin(base, m.CredentialsFile); err != nil {
+			if !ready.Load() {
+				if err := checkReady(base, m); err != nil {
 					log.Print(err)
 					continue
 				}

@@ -53,9 +53,14 @@ stop 校验 PID 与 Linux starttime，防止误杀复用 PID；先 SIGTERM 优�
 manifest 同时记录 commit、branch、dirty、前端摘要与 build ID。
 `/__preview/info` 返回构建身份与健康，不公开凭据、PID 或主机路径。
 
-首次 SQLite 从仓库初始化 SQL 创建，并在启动监听前替换默认 root 密码。
-status 提供 credentialsFile 路径；密码仅本机读取。网关在版本、页面、TSDB 查询、
-登录及鉴权接口通过后放行。准备入口 `.../__preview/ready` 显示版本并清理该域名
+首次 SQLite 从仓库初始化 SQL 创建，并在启动监听前替换默认 root 密码，同时写入
+实例级 `login-check.pending`。网关首次验证登录和鉴权资料成功后删除该标记；失败或
+中断时保留，后续启动继续验证。refresh 不重新生成标记、不重置密码。已有旧实例没有
+该标记时直接使用健康检查，不强制用初始化密码重新登录。
+status 提供 credentialsFile 路径，其中只保存初始化凭据，UI 改密后不会同步更新；
+密码仅本机读取。每次启动及状态探测都验证版本、页面、TSDB 查询，以及匿名访问
+`/api/n9e/self/profile` 返回 401，就绪不依赖用户的当前密码。
+准备入口 `.../__preview/ready` 显示版本并清理该域名
 旧存储/缓存，再点击登录；miniredis 是进程内的，刷新后旧 Token 可能失效。
 Ready 不替代告警业务、真实模型和人工验收。
 
@@ -92,7 +97,7 @@ QA manifest 分别记录，不能宣称天然同版。full 设置 RequireIsolati
 | 构建失败 | 看 build.log，修复源码/网络/依赖后 refresh，绑定仍保留 |
 | 本地通、公网不通 | 查 DNS、Tunnel ingress、用户服务和公网返回的实例身份 |
 | 网关退出 | 看 preview.log，排查端口、启动、迁移与健康检查 |
-| 登录失败 | 用该实例 credentialsFile，重新登录而非复用旧 Token |
+| 登录失败 | 未改密时用该实例 credentialsFile；改密后用新密码重新登录，初始化凭据不会同步更新 |
 | verify 失败 | 区分基线、缺失外部服务及新增回归，不能用预览通过替代门禁 |
 
 日志可能包含用户内容或诊断信息，分享前处理敏感内容。归档 hook 应在源码删除前清理，

@@ -9,11 +9,84 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestReadinessAfterPasswordChange(t *testing.T) {
+	directory := t.TempDir()
+	credentials := filepath.Join(directory, "credentials.json")
+	pending := filepath.Join(directory, "login-check.pending")
+	if err := os.WriteFile(credentials, []byte(`{"username":"root","password":"initial"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pending, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var passwordChanged atomic.Bool
+	var logins atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/n9e/version":
+			fmt.Fprint(w, "preview-new")
+		case "/login":
+			fmt.Fprint(w, "<html></html>")
+		case "/prometheus/api/v1/query":
+			fmt.Fprint(w, `{"status":"success"}`)
+		case "/api/n9e/auth/login":
+			logins.Add(1)
+			if passwordChanged.Load() {
+				fmt.Fprint(w, `{"err":"Username or password invalid"}`)
+				return
+			}
+			fmt.Fprint(w, `{"dat":{"access_token":"test"}}`)
+		case "/api/n9e/self/profile":
+			if r.Header.Get("Authorization") != "Bearer test" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			fmt.Fprint(w, `{"dat":{"username":"root"}}`)
+		default:
+			t.Errorf("unexpected probe: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer backend.Close()
+	m := manifest{BuildID: "new", CredentialsFile: credentials}
+	// A failed first login must remain pending, including across another attempt.
+	passwordChanged.Store(true)
+	if err := checkReady(backend.URL, m); err == nil {
+		t.Fatal("failed initial login accepted as ready")
+	}
+	if _, err := os.Stat(pending); err != nil {
+		t.Fatalf("failed login lost pending check: %v", err)
+	}
+	passwordChanged.Store(false)
+	if err := checkReady(backend.URL, m); err != nil {
+		t.Fatalf("initial readiness failed: %v", err)
+	}
+	passwordChanged.Store(true)
+	if err := checkReady(backend.URL, m); err != nil {
+		t.Fatalf("refresh after password change failed: %v", err)
+	}
+	if logins.Load() != 2 {
+		t.Fatalf("refresh retried initial credentials: %d logins", logins.Load())
+	}
+	if _, err := os.Stat(pending); !os.IsNotExist(err) {
+		t.Fatalf("successful login did not clear pending check: %v", err)
+	}
+	// Old instances also have no pending marker and must not need initial credentials.
+	if err := os.Remove(credentials); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkReady(backend.URL, m); err != nil {
+		t.Fatalf("existing instance required initial credentials: %v", err)
+	}
+}
 
 func TestStartingPreviewDoesNotForwardRequests(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,14 +102,25 @@ func TestStartingPreviewDoesNotForwardRequests(t *testing.T) {
 }
 
 func TestInfoChecksBackendBuildAndHealth(t *testing.T) {
-	for _, version := range []string{"preview-new", "preview-old"} {
-		t.Run(version, func(t *testing.T) {
+	for _, test := range []struct {
+		version         string
+		anonymousStatus int
+		ready           bool
+	}{
+		{"preview-new", http.StatusUnauthorized, true},
+		{"preview-old", http.StatusUnauthorized, false},
+		{"preview-new", http.StatusOK, false},
+		{"preview-new", http.StatusInternalServerError, false},
+	} {
+		t.Run(fmt.Sprintf("%s/anonymous-%d", test.version, test.anonymousStatus), func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/n9e/version":
-					fmt.Fprint(w, version)
+					fmt.Fprint(w, test.version)
 				case "/login":
 					fmt.Fprint(w, "<html></html>")
+				case "/api/n9e/self/profile":
+					w.WriteHeader(test.anonymousStatus)
 				default:
 					fmt.Fprint(w, `{"status":"success"}`)
 				}
@@ -51,7 +135,7 @@ func TestInfoChecksBackendBuildAndHealth(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
 				t.Fatal(err)
 			}
-			if info["ready"] != (version == "preview-new") {
+			if info["ready"] != test.ready {
 				t.Fatalf("wrong readiness: %s", w.Body.String())
 			}
 			if strings.Contains(w.Body.String(), "/private") || strings.Contains(w.Body.String(), "/secret") {

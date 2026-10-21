@@ -247,8 +247,8 @@ def stop(binding):
 def seed(directory):
     db_path = directory / "run/n9e.db"
     if db_path.exists():
-        if not (directory / "credentials.json").exists():
-            raise RuntimeError("database exists without credentials.json; recover credentials or destroy preview")
+        # Existing accounts may have changed their password. Never restore the
+        # initial credentials or require them for a restart (including legacy instances).
         return
     # Replace the shipped default before the first listener can accept requests.
     credentials = {"username": "root", "password": secrets.token_urlsafe(18)}
@@ -258,6 +258,9 @@ def seed(directory):
         with sqlite3.connect(staging) as db:
             db.executescript((ROOT / "docker/sqlite.sql").read_text())
             db.execute("UPDATE users SET password = ? WHERE username = 'root'", (credentials["password"],))
+        # Publish the pending check before the DB so interrupted initial startup
+        # cannot silently skip account verification on the next refresh.
+        write_json(directory / "login-check.pending", {})
         staging.replace(db_path)
     finally:
         staging.unlink(missing_ok=True)

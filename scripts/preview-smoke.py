@@ -6,6 +6,7 @@ Run separately from make verify. Leaves the ordinary host registry untouched.
 import json
 import os
 from pathlib import Path
+import secrets
 import shutil
 import socket
 import sqlite3
@@ -48,6 +49,17 @@ def main():
             with opener.open(f"http://127.0.0.1:{port}{path}", timeout=10) as response:
                 return response.read().decode()
 
+        def api(port, path, body=None, token=None, method=None):
+            headers = {"Content-Type": "application/json"}
+            if token:
+                headers["Authorization"] = "Bearer " + token
+            request = urllib.request.Request(f"http://127.0.0.1:{port}/api/n9e{path}",
+                data=json.dumps(body).encode() if body is not None else None,
+                headers=headers, method=method)
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(request, timeout=10) as response:
+                return json.load(response)
+
         subprocess.run(["git", "worktree", "add", "--detach", str(second), "HEAD"], cwd=ROOT, check=True,
                        stdout=subprocess.DEVNULL)
         try:
@@ -87,11 +99,25 @@ def main():
             (frontend / "index.html").write_text("<html>smoke frontend two</html>")
             assert command(second, "status")["frontendChanged"]
             assert "smoke frontend one" in read(ports[1], "/login")  # staged, never live-linked
+            initial_login = api(ports[1], "/auth/login", other_credentials)
+            token = initial_login["dat"]["access_token"]
+            original_profile = api(ports[1], "/self/profile", token=token)["dat"]
+            new_credentials = {"username": "root", "password": secrets.token_urlsafe(24)}
+            changed_password = api(ports[1], "/self/password",
+                {"oldpass": other_credentials["password"], "newpass": new_credentials["password"]},
+                token=token, method="PUT")
+            assert not changed_password.get("err"), "password change failed"
             refreshed = command(second, "refresh")
             assert refreshed["buildId"] != other["buildId"]
             assert not refreshed["frontendChanged"] and not refreshed["sourceChanged"]
             assert "smoke frontend two" in read(ports[1], "/login")
             assert json.loads(Path(refreshed["credentialsFile"]).read_text()) == other_credentials
+            assert not (Path(refreshed["instanceDir"]) / "login-check.pending").exists()
+            old_login = api(ports[1], "/auth/login", other_credentials)
+            assert not (old_login.get("dat") or {}).get("access_token"), "initial password still accepted"
+            new_login = api(ports[1], "/auth/login", new_credentials)
+            new_profile = api(ports[1], "/self/profile", token=new_login["dat"]["access_token"])["dat"]
+            assert (new_profile["id"], new_profile["roles"]) == (original_profile["id"], original_profile["roles"])
             command(second, "stop")
             stopped = command(second, "status")
             assert not stopped["running"] and not stopped["local"]["ok"]
@@ -104,7 +130,8 @@ def main():
             assert replacement["instanceDir"] != other["instanceDir"]
             print(json.dumps({"result": "passed", "checks": ["two worktrees", "slot ownership",
                 "private credentials and DB", "dirty source detection", "frontend staging and drift",
-                "refresh preserves account", "stop isolation", "destroy/idempotence", "slot reuse"],
+                "refresh after password change preserves account and roles", "initial password rejected",
+                "stop isolation", "destroy/idempotence", "slot reuse"],
                 "firstBuildId": first["buildId"], "secondBuildId": refreshed["buildId"]}, indent=2))
         finally:
             for root in (second, ROOT):
