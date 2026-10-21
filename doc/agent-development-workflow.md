@@ -5,8 +5,10 @@
 
 ## 生命周期总览
 
-下图的节点前缀与颜色表示责任归属。程序包括 Paseo、验证脚本、Git hooks、CI、
-预览管理器和发布工具；由人或 Agent 发起操作，按固定规则执行并返回结果。
+下图只展示正常交付主线，节点前缀与颜色表示责任归属。失败恢复、暂停和取消
+统一在图后说明，具体命令与证据要求放在各阶段正文中。
+程序包括 Paseo、验证脚本、Git hooks、CI、预览管理器和发布工具；由人或 Agent
+发起操作，按固定规则执行并返回结果。
 可将 Mermaid 代码块复制到 [Mermaid Live Editor](https://mermaid.live/) 编辑和导出。
 
 | 角色 | 在生命周期中的作用 | 必须留下的结果 |
@@ -17,113 +19,85 @@
 
 ```mermaid
 flowchart TB
-    subgraph Prepare["1. 定义任务与准备环境"]
-        H_goal["人：明确场景、范围与验收标准"]:::human
-        A_plan["Agent：检查 Git 状态、读取规则与调用链<br/>明确方案、基线及已有授权"]:::agent
-        P_setup{"程序：任务 worktree 与依赖准备完成？<br/>Paseo setup 配置 hooks，install 下载依赖"}:::program
+    subgraph Prepare["1. 准备任务与环境"]
+        H_goal["人：明确目标与验收标准"]:::human
+        A_plan["Agent：调查并明确方案与授权"]:::agent
+        P_setup["程序：准备 worktree 与依赖"]:::program
         H_goal --> A_plan --> P_setup
-        A_plan -->|目标或产品取舍待明确| H_goal
-        P_setup -->|失败，重新排查环境| A_plan
     end
 
-    subgraph Iterate["2. 实现、检查与运行实例验收"]
-        A_work["Agent：实现或修复<br/>补充相关行为测试"]:::agent
-        P_verify{"程序：相关测试与 make verify 通过？<br/>需要时执行 verify-all / 专项检查"}:::program
-        A_diagnose["Agent：定位失败、补足证据或环境<br/>修复后从原始入口重跑"]:::agent
-        P_preview{"程序：preview / refresh 后就绪？<br/>构建身份匹配，本地及公网探测通过"}:::program
-        A_evidence["Agent：浏览器检查并记录证据<br/>交付 build ID、步骤、限制及凭据文件路径"]:::agent
-        H_accept{"人：在对应运行实例上验收通过？"}:::human
+    subgraph Iterate["2. 实现、本地验证与预览验收"]
+        A_work["Agent：实现与行为测试"]:::agent
+        P_verify{"程序：本地检查通过？"}:::program
+        P_preview["程序：准备或刷新预览"]:::program
+        A_evidence["Agent：核验版本、浏览器检查与取证"]:::agent
+        H_accept{"人：运行实例验收通过？"}:::human
         A_work --> P_verify
-        P_verify -->|失败| A_diagnose
-        A_diagnose --> A_work
-        P_verify -->|通过| P_preview
-        P_preview -->|失败或源码 / 前端漂移| A_diagnose
-        P_preview -->|就绪| A_evidence --> H_accept
-        H_accept -->|反馈修改| A_work
+        P_verify -->|通过| P_preview --> A_evidence --> H_accept
     end
 
-    subgraph Deliver["3. PR、审查与可选发布"]
-        A_push["Agent：按授权提交任务文件并推送"]:::agent
-        P_push{"程序：原始 pre-push 门禁通过？"}:::program
-        A_pr["Agent：创建或更新 PR<br/>关联需求，附检查、预览及人工验收证据"]:::agent
+    subgraph Deliver["3. PR、审查与合并"]
+        A_push["Agent：按授权提交并发起推送"]:::agent
+        P_push{"程序：pre-push 通过？"}:::program
+        A_pr["Agent：创建或更新 PR，附验收证据"]:::agent
         P_ci{"程序：CI 与 evidence 门禁通过？"}:::program
-        H_review{"人：审查通过且合并已获授权？"}:::human
-        P_merge["程序：执行已授权的合并"]:::program
-        H_release{"人：本任务是否包含发布？"}:::human
-        A_release["Agent：按授权准备版本与发布操作<br/>明确核验步骤及失败恢复方案"]:::agent
-        P_release{"程序：发布及部署核验通过？"}:::program
-        A_recover["Agent：记录失败<br/>按授权发起回退或恢复"]:::agent
-        P_recover{"程序：执行恢复并核验通过？"}:::program
-        H_retry{"人：确认恢复结果<br/>继续本次发布还是移交后续任务？"}:::human
+        H_review{"人：审查通过且合并已授权？"}:::human
+        P_merge["程序：执行合并"]:::program
         A_push --> P_push
-        P_push -->|失败，推送被阻止| A_diagnose
-        P_push -->|通过| A_pr --> P_ci
-        P_ci -->|失败| A_diagnose
+        P_push -->|通过后完成推送| A_pr --> P_ci
         P_ci -->|通过| H_review
-        H_review -->|需要修改| A_work
-        H_review -->|通过且已授权| P_merge --> H_release
-        H_release -->|需要且已授权| A_release --> P_release
-        P_release -->|失败| A_recover --> P_recover
-        P_recover -->|失败| A_recover
-        P_recover -->|通过| H_retry
-        H_retry -->|继续发布| A_release
+        H_review -->|通过且已授权| P_merge
     end
 
-    subgraph Finish["4. 交接、资源清理与关闭"]
-        A_handover["Agent：记录完成 / 取消 / 已回退状态<br/>保存所需数据、证据及后续任务"]:::agent
-        P_destroy["程序：执行 teardown / destroy"]:::program
-        A_confirm{"Agent：核实进程退出、实例数据清理<br/>槽位释放且交接证据已保存？"}:::agent
-        A_cleanup["Agent：检查日志与残留资源<br/>排障后重试清理"]:::agent
-        P_archive["程序：清理成功后归档 worktree"]:::program
-        H_close["人：核对交付结果并关闭任务"]:::human
-        A_handover --> P_destroy --> A_confirm
-        A_confirm -->|失败| A_cleanup --> P_destroy
-        A_confirm -->|通过| P_archive --> H_close
+    subgraph Finish["4. 交付与关闭"]
+        A_release["Agent：按授权准备发布与恢复方案"]:::agent
+        P_release{"程序：发布与部署核验通过？"}:::program
+        A_handover["Agent：交接结果，保存成果与证据"]:::agent
+        P_cleanup["程序：清理资源后归档"]:::program
+        H_close["人：核对交付并关闭任务"]:::human
+        A_release --> P_release
+        P_release -->|通过| A_handover
+        A_handover --> P_cleanup --> H_close
     end
 
-    subgraph Pause["暂停与取消：任一进行中阶段均可进入"]
-        H_pause{"人：暂停还是取消任务？"}:::human
-        A_save["Agent：保存进度、检查结果及恢复入口"]:::agent
-        P_stop["程序：stop 成功后保留槽位与实例数据<br/>失败由 Agent 排障并重试"]:::program
-        H_resume{"人：恢复任务还是取消？"}:::human
-        H_pause -->|暂停| A_save --> P_stop --> H_resume
-        H_resume -->|恢复| A_plan
-        H_pause -->|取消| A_handover
-        H_resume -->|取消| A_handover
-    end
-
-    P_setup -->|完成| A_work
+    P_setup --> A_work
     H_accept -->|通过| A_push
-    H_release -->|不在本任务范围| A_handover
-    P_release -->|通过| A_handover
-    H_retry -->|登记后续任务| A_handover
-    A_work -.->|示意：任一阶段可暂停 / 取消| H_pause
-    H_close -.->|后续缺陷或新需求建立新任务| H_goal
+    P_merge -->|本任务不含发布| A_handover
+    P_merge -->|发布已获授权| A_release
 
     classDef human fill:#fff3cd,stroke:#a16207,color:#422006
     classDef agent fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
     classDef program fill:#dcfce7,stroke:#15803d,color:#14532d
 ```
 
-沿用会话中已有的明确授权；仅在目标、产品取舍或操作权限不足时补充确认。
-草稿 PR 可提前创建，用于讨论和跟踪待办；转为可合并状态前仍须完成图中的门禁、
-人工验收和审查。程序不会自动作出产品取舍，Agent 也不能代填人工验收。
+先在本地完成检查和人工验收，再按授权推送、创建 PR；推送须通过 pre-push hook，
+先过滤本地可发现的问题，减少无效推送和 CI 消耗。CI 保留为远端统一验证，不能用
+本地通过记录替代。沿用会话中已有的明确授权；仅在目标、产品取舍或操作权限不足时
+补充确认。程序不会自动作出产品取舍，Agent 也不能代填人工验收。
 
-流程中的回路必须保留：检查失败先修复，再从原始入口重跑；不能跳过或临时替换
+失败或反馈由 Agent 定位问题，返回对应步骤：代码问题回到实现，环境问题回到环境
+准备或预览，证据问题补齐记录。处理后从失败的原始入口重跑，不能跳过或临时替换
 pre-push / CI 来取得通过结果。测试使用临时 Git 仓库时必须隔离继承的仓库环境，
-确保检查过程不改变任务仓库。任何代码或前端修改都返回实现与检查阶段，重新刷新
-预览并核对 build ID，补验受影响路径；旧版本的通过记录不代表新版本已验收。
+确保检查过程不改变任务仓库。任何代码或前端修改都重新执行相关检查，刷新预览并
+核对 build ID，补验受影响路径；旧版本的通过记录不代表新版本已验收。
 
 发布是独立的授权动作，合并不会自动更新稳定实例。具体发布、部署和恢复命令取决于
 交付方式；当前预览脚本只管理实例生命周期。更新稳定实例仍须从配置的干净 main
-checkout 构建，分支只使用 dev 槽位。恢复失败时任务保持未完成；已回退且移交后续
-修复时，交接须明确“本次发布未完成”，并关联可追踪的后续任务。
+checkout 构建，分支只使用 dev 槽位。发布失败时，Agent 记录失败，按授权发起回退或
+恢复并核验；恢复失败时任务保持未完成，继续排障。恢复成功后，由人确认继续本次
+发布还是移交后续任务。已回退且移交后续修复时，交接须明确“本次发布未完成”，并
+关联可追踪的后续任务。
+
+暂停和取消作为各阶段的旁路：人决定暂停后，Agent 保存进度、检查结果及恢复入口，
+程序执行 stop，保留槽位与实例数据；失败时排障并重试。恢复时 Agent 核对当前环境
+与已有结果，返回对应步骤；取消时转入交接与清理。暂停不代表任务完成，后续缺陷或
+新需求在关闭后建立新任务。
 
 闭环交付要同时具备：任务结果与人工结论、最终版本对应的工程检查和预览证据、
-明确的剩余事项归属，以及归档前的资源清理结果。暂停只保留进度，不代表任务完成；
-取消也要交接和清理。先保存所需数据和证据，再执行 destroy；清理失败时保留源码
-与登记信息继续排障，确认资源释放后再归档。各阶段操作细节见下文和
-[预览运行手册](worktree-preview.md)。
+明确的剩余事项归属，以及归档前的资源清理结果。先保存代码、所需数据和证据，再
+执行 teardown / destroy。Agent 核实进程退出、实例数据清理、槽位释放及交接证据已
+保存后，程序再归档 worktree；清理失败时保留源码与登记信息，排障后从清理入口重试。
+各阶段操作细节见下文和[预览运行手册](worktree-preview.md)。
 
 ## 开始任务
 
