@@ -1,5 +1,28 @@
 # AI 开发设施验证记录
 
+## 2026-10-21 PR #1 CI 时区依赖修复
+
+GitHub Actions 的 `verify` 在 `pkg/unit` 的秒/毫秒时间戳断言失败：UTC
+runner 输出 `2023-05-08 04:00:00`，测试却固定期望东八区的
+`2023-05-08 12:00:00`。本地执行
+`TZ=UTC go test ./pkg/unit -run TestValueFormatter -count=1` 复现两项子测试失败，
+相同命令改为 `TZ=Asia/Shanghai` 则通过。
+
+保留 `ValueFormatter` 按进程本地时区格式化的行为，把时间戳用例移入独立测试，
+显式设置 UTC、UTC+08、UTC-05，并在每组测试后恢复 `time.Local`。
+两种时间戳精度均断言完整 `FormattedValue`；负偏移用例同时覆盖跨日。
+测试顺序执行，避免进程级时区在并行用例之间相互影响。
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| `TZ=UTC` / `TZ=Asia/Shanghai` / `TZ=America/New_York` 下分别执行 `go test ./pkg/unit -count=1` | 三种宿主时区均通过 |
+| `TZ=UTC make verify` | 退出 0；18 项 Python 测试通过，Go 2613 passed、0 failed、39 skipped（包含子测试） |
+| `TZ=UTC make verify-all` | 退出 0；相同测试统计，另含 `go vet ./...` 及两个全量集成模板门禁通过 |
+
+39 项 skip 包含未配置的外部服务及其他专项条件，不计作已验证。
+本次只修改测试及验证记录，未启动或刷新预览，没有新的 preview build ID；
+未执行浏览器或人工产品验收，未发布稳定实例。PR 原有三项 P2 审查待办不在本次修复范围。
+
 ## 2026-10-21 pre-push 临时 Git 仓库隔离修复
 
 首次实际推送暴露了 hook 环境污染：Python 测试只通过 `cwd` 选择临时仓库，
